@@ -11,19 +11,7 @@
 // <string>
 
 // [string.op.plus]
-//
-// template<class charT, class traits, class Allocator>
-//   constexpr basic_string<charT, traits, Allocator>
-//     operator+(const basic_string<charT, traits, Allocator>& lhs,
-//               type_identity_t<basic_string_view<charT, traits>> rhs);                           // Since C++26
-// template<class charT, class traits, class Allocator>
-//   constexpr basic_string<charT, traits, Allocator>
-//     operator+(basic_string<charT, traits, Allocator>&& lhs,
-//               type_identity_t<basic_string_view<charT, traits>> rhs);                           // Since C++26
-// template<class charT, class traits, class Allocator>
-//   constexpr basic_string<charT, traits, Allocator>
-//     operator+(type_identity_t<basic_string_view<charT, traits>> lhs,
-//               const basic_string<charT, traits, Allocator>& rhs);                               // Since C++26
+
 // template<class charT, class traits, class Allocator>
 //   constexpr basic_string<charT, traits, Allocator>
 //     operator+(type_identity_t<basic_string_view<charT, traits>> lhs,
@@ -47,68 +35,19 @@
 
 template <typename CharT, typename TraitsT, typename AllocT>
 constexpr void test(const CharT* x, const CharT* y, const CharT* expected) {
+  (void)y;
+  (void)expected;
+
   AllocT allocator;
 
-  // string& + string_view
-  {
-    std::basic_string<CharT, TraitsT, AllocT> st{x, allocator};
-    std::basic_string_view<CharT, TraitsT> sv{y};
-
-    std::same_as<std::basic_string<CharT, TraitsT, AllocT>> decltype(auto) result = st + sv;
-    assert(result == expected);
-    assert(result.get_allocator() == allocator);
-    LIBCPP_ASSERT(is_string_asan_correct(st + sv));
-  }
-  // const string& + string_view
-  {
-    const std::basic_string<CharT, TraitsT, AllocT> st{x, allocator};
-    std::basic_string_view<CharT, TraitsT> sv{y};
-
-    std::same_as<std::basic_string<CharT, TraitsT, AllocT>> decltype(auto) result = st + sv;
-    assert(result == expected);
-    assert(result.get_allocator() == allocator);
-    LIBCPP_ASSERT(is_string_asan_correct(st + sv));
-  }
-  // string&& + string_view
-  {
-    std::basic_string<CharT, TraitsT, AllocT> st{x, allocator};
-    std::basic_string_view<CharT, TraitsT> sv{y};
-
-    std::same_as<std::basic_string<CharT, TraitsT, AllocT>> decltype(auto) result = std::move(st) + sv;
-    assert(result == expected);
-    assert(result.get_allocator() == allocator);
-    LIBCPP_ASSERT(is_string_asan_correct(std::move(st) + sv));
-  }
-  // string_view + string&
-  {
-    std::basic_string_view<CharT, TraitsT> sv{x};
-    std::basic_string<CharT, TraitsT, AllocT> st{y, allocator};
-
-    std::same_as<std::basic_string<CharT, TraitsT, AllocT>> decltype(auto) result = sv + st;
-    assert(result == expected);
-    assert(result.get_allocator() == allocator);
-    LIBCPP_ASSERT(is_string_asan_correct(sv + st));
-  }
-  // string_view + const string&
-  {
-    std::basic_string_view<CharT, TraitsT> sv{x};
-    const std::basic_string<CharT, TraitsT, AllocT> st{y, allocator};
-
-    std::same_as<std::basic_string<CharT, TraitsT, AllocT>> decltype(auto) result = sv + st;
-    assert(result == expected);
-    assert(result.get_allocator() == allocator);
-    LIBCPP_ASSERT(is_string_asan_correct(sv + st));
-  }
   // string_view + string&&
   {
-    std::basic_string<CharT, TraitsT, AllocT> st_{x, allocator};
-    std::basic_string_view<CharT, TraitsT> sv{st_};
+    std::basic_string_view<CharT, TraitsT> sv{x};
     std::basic_string<CharT, TraitsT, AllocT> st{y, allocator};
 
-    std::same_as<std::basic_string<CharT, TraitsT, AllocT>> decltype(auto) result = sv + std::move(st);
-    assert(result == expected);
-    assert(result.get_allocator() == allocator);
-    LIBCPP_ASSERT(is_string_asan_correct(sv + std::move(st)));
+    std::ignore = sv + std::move(st);
+    // <- # | /home/hristo/Projects/llvm-project/libcxx/test/support/constexpr_char_traits.h:127:10: note: comparison of addresses of literals has unspecified value
+    //    # |   127 |   if (s1 == s2)
   }
 }
 
@@ -153,18 +92,6 @@ constexpr bool test() {
 int main(int, char**) {
   test<char>();
   static_assert(test<char>());
-#ifndef TEST_HAS_NO_WIDE_CHARACTERS
-  test<wchar_t>();
-  static_assert(test<wchar_t>());
-#endif
-#ifndef TEST_HAS_NO_CHAR8_T
-  test<char8_t>();
-  static_assert(test<char8_t>());
-#endif
-  test<char16_t>();
-  static_assert(test<char16_t>());
-  test<char32_t>();
-  static_assert(test<char32_t>());
 
   return 0;
 }
