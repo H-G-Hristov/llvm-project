@@ -80,9 +80,9 @@ public:
     return __tmp;
   }
 
-  constexpr _LIBCPP_HIDE_FROM_ABI iter_reference_t<_Iterator> operator*() const { return *__iter_; }
+  [[nodiscard]] constexpr _LIBCPP_HIDE_FROM_ABI iter_reference_t<_Iterator> operator*() const { return *__iter_; }
 
-  _LIBCPP_HIDE_FROM_ABI friend constexpr iter_rvalue_reference_t<_Iterator>
+  [[nodiscard]] _LIBCPP_HIDE_FROM_ABI friend constexpr iter_rvalue_reference_t<_Iterator>
   iter_move(const __iterator_with_data& __iter) noexcept(noexcept(ranges::iter_move(__iter.__iter_))) {
     return ranges::iter_move(__iter.__iter_);
   }
