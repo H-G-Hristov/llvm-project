@@ -25,6 +25,7 @@ namespace std {
 #else
 
 #  include <__config>
+#  include <csignal>
 #  include <version>
 
 #  if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
@@ -47,7 +48,7 @@ _LIBCPP_AVAILABILITY_DEBUGGING _LIBCPP_EXPORTED_FROM_ABI void __breakpoint() noe
 
 _LIBCPP_AVAILABILITY_DEBUGGING _LIBCPP_HIDE_FROM_ABI _LIBCPP_ALWAYS_INLINE inline void breakpoint() noexcept {
   if (__gnu_cxx::debugger_signal_for_breakpoint > 0) {
-    std::raise(__gnu_cxx::debugger_signal_for_breakpoint);
+    raise(__gnu_cxx::debugger_signal_for_breakpoint);
   } else {
 #    if __has_builtin(__builtin_debugtrap)
     __builtin_debugtrap();
