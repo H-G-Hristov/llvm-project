@@ -46,16 +46,17 @@ _LIBCPP_BEGIN_NAMESPACE_STD
 _LIBCPP_AVAILABILITY_DEBUGGING _LIBCPP_EXPORTED_FROM_ABI void __breakpoint() noexcept;
 
 _LIBCPP_AVAILABILITY_DEBUGGING _LIBCPP_HIDE_FROM_ABI _LIBCPP_ALWAYS_INLINE inline void breakpoint() noexcept {
-  if (__gnu_cxx::debugger_signal_for_breakpoint >= 0)
+  if (__gnu_cxx::debugger_signal_for_breakpoint > 0) {
     std::raise(__gnu_cxx::debugger_signal_for_breakpoint);
-
+  } else {
 #    if __has_builtin(__builtin_debugtrap)
-  __builtin_debugtrap();
+    __builtin_debugtrap();
 #    elif defined(_MSC_VER)
-  __debugbreak();
+    __debugbreak();
 #    else
-  __breakpoint();
+    __breakpoint();
 #    endif
+  }
 }
 
 _LIBCPP_AVAILABILITY_DEBUGGING _LIBCPP_EXPORTED_FROM_ABI _LIBCPP_OVERRIDABLE_FUNC_VIS bool
