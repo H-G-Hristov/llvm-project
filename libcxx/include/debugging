@@ -25,6 +25,7 @@ namespace std {
 #else
 
 #  include <__config>
+#  include <csignal>
 #  include <version>
 
 #  if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
