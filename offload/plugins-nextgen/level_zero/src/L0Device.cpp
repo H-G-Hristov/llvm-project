@@ -286,20 +286,25 @@ Error L0DeviceTy::synchronizeImpl(__tgt_async_info &AsyncInfo,
 
   AsyncQueueTy *AsyncQueue = reinterpret_cast<AsyncQueueTy *>(AsyncInfo.Queue);
 
+  Error SyncErrors = Error::success();
+  auto addError = [&](Error Err) {
+    SyncErrors = joinErrors(std::move(SyncErrors), std::move(Err));
+  };
   if (!AsyncQueue->WaitEvents.empty()) {
     const auto &WaitEvents = AsyncQueue->WaitEvents;
     if (Plugin.getOptions().CommandMode == CommandModeTy::AsyncOrdered) {
       // Only need to wait for the last event.
-      CALL_ZE_RET_ERROR(zeEventHostSynchronize, WaitEvents.back(),
-                        L0DefaultTimeout);
+      CALL_ZE_HANDLE_ERROR(addError, zeEventHostSynchronize, WaitEvents.back(),
+                           L0DefaultTimeout);
       // Synchronize on kernel event to support printf().
       auto KE = AsyncQueue->KernelEvent;
-      if (KE && KE != WaitEvents.back()) {
-        CALL_ZE_RET_ERROR(zeEventHostSynchronize, KE, L0DefaultTimeout);
+      if (KE && KE != WaitEvents.back() && !SyncErrors) {
+        CALL_ZE_HANDLE_ERROR(addError, zeEventHostSynchronize, KE,
+                             L0DefaultTimeout);
       }
       for (auto &Event : WaitEvents) {
         if (auto Err = releaseEvent(Event))
-          return Err;
+          addError(std::move(Err));
       }
     } else {
       // Async case.
@@ -311,14 +316,18 @@ Error L0DeviceTy::synchronizeImpl(__tgt_async_info &AsyncInfo,
       bool WaitDone = false;
       for (auto Itr = WaitEvents.rbegin(); Itr != WaitEvents.rend(); Itr++) {
         if (!WaitDone) {
-          CALL_ZE_RET_ERROR(zeEventHostSynchronize, *Itr, L0DefaultTimeout);
+          CALL_ZE_HANDLE_ERROR(addError, zeEventHostSynchronize, *Itr,
+                               L0DefaultTimeout);
           if (*Itr == AsyncQueue->KernelEvent)
             WaitDone = true;
         }
         if (auto Err = releaseEvent(*Itr))
-          return Err;
+          addError(std::move(Err));
       }
     }
+    // In either case, all the events are now reset and released
+    // back into the pool. We need to clear them from the queue.
+    AsyncQueue->WaitEvents.clear();
   }
 
   // Commit delayed USM2M copies.
@@ -337,7 +346,7 @@ Error L0DeviceTy::synchronizeImpl(__tgt_async_info &AsyncInfo,
     AsyncInfo.Queue = nullptr;
   }
 
-  return Plugin::success();
+  return SyncErrors;
 }
 
 Expected<bool>
@@ -355,16 +364,24 @@ L0DeviceTy::hasPendingWorkImpl(AsyncInfoWrapperTy &AsyncInfoWrapper) {
   return true;
 }
 
-Error L0DeviceTy::queryAsyncImpl(__tgt_async_info &AsyncInfo) {
+Error L0DeviceTy::queryAsyncImpl(__tgt_async_info &AsyncInfo, bool ReleaseQueue,
+                                 bool *IsQueueWorkCompleted) {
+  if (IsQueueWorkCompleted)
+    *IsQueueWorkCompleted = true;
   const bool IsAsync = AsyncInfo.Queue && asyncEnabled();
   if (!IsAsync)
     return Plugin::success();
+  if (IsQueueWorkCompleted)
+    *IsQueueWorkCompleted = false;
 
   auto &Plugin = getPlugin();
   auto *AsyncQueue = static_cast<AsyncQueueTy *>(AsyncInfo.Queue);
 
   if (!AsyncQueue->WaitEvents.empty())
     return Plugin::success();
+
+  if (IsQueueWorkCompleted)
+    *IsQueueWorkCompleted = true;
 
   // Commit delayed USM2M copies.
   for (auto &USM2M : AsyncQueue->USM2MList) {
@@ -376,9 +393,11 @@ Error L0DeviceTy::queryAsyncImpl(__tgt_async_info &AsyncInfo) {
     std::copy_n(static_cast<char *>(std::get<0>(H2M)), std::get<2>(H2M),
                 static_cast<char *>(std::get<1>(H2M)));
   }
-  Plugin.releaseAsyncQueue(AsyncQueue);
-  getStagingBuffer().reset();
-  AsyncInfo.Queue = nullptr;
+  if (ReleaseQueue) {
+    Plugin.releaseAsyncQueue(AsyncQueue);
+    getStagingBuffer().reset();
+    AsyncInfo.Queue = nullptr;
+  }
 
   return Plugin::success();
 }

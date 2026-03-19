@@ -13,6 +13,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Sema/AnalysisBasedWarnings.h"
+#include "SemaLifetimeSafety.h"
+#include "TypeLocBuilder.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
@@ -571,8 +573,8 @@ static ControlFlowKind CheckFallThrough(AnalysisDeclContext &AC) {
   // The CFG leaves in dead things, and we don't want the dead code paths to
   // confuse us, so we mark all live things first.
   llvm::BitVector live(cfg->getNumBlockIDs());
-  unsigned count = reachable_code::ScanReachableFromBlock(&cfg->getEntry(),
-                                                          live);
+  unsigned count =
+      reachable_code::ScanReachableFromBlock(&cfg->getEntry(), live);
 
   bool AddEHEdges = AC.getAddEHEdges();
   if (!AddEHEdges && count != cfg->getNumBlockIDs())
@@ -2870,76 +2872,13 @@ public:
   }
 };
 
-namespace clang::lifetimes {
-namespace {
-class LifetimeSafetyReporterImpl : public LifetimeSafetyReporter {
-
-public:
-  LifetimeSafetyReporterImpl(Sema &S) : S(S) {}
-
-  void reportUseAfterFree(const Expr *IssueExpr, const Expr *UseExpr,
-                          SourceLocation FreeLoc, Confidence C) override {
-    S.Diag(IssueExpr->getExprLoc(),
-           C == Confidence::Definite
-               ? diag::warn_lifetime_safety_loan_expires_permissive
-               : diag::warn_lifetime_safety_loan_expires_strict)
-        << IssueExpr->getEndLoc();
-    S.Diag(FreeLoc, diag::note_lifetime_safety_destroyed_here);
-    S.Diag(UseExpr->getExprLoc(), diag::note_lifetime_safety_used_here)
-        << UseExpr->getEndLoc();
-  }
-
-  void reportUseAfterReturn(const Expr *IssueExpr, const Expr *EscapeExpr,
-                            SourceLocation ExpiryLoc, Confidence C) override {
-    S.Diag(IssueExpr->getExprLoc(),
-           C == Confidence::Definite
-               ? diag::warn_lifetime_safety_return_stack_addr_permissive
-               : diag::warn_lifetime_safety_return_stack_addr_strict)
-        << IssueExpr->getEndLoc();
-
-    S.Diag(EscapeExpr->getExprLoc(), diag::note_lifetime_safety_returned_here)
-        << EscapeExpr->getEndLoc();
-  }
-
-  void suggestAnnotation(SuggestionScope Scope,
-                         const ParmVarDecl *ParmToAnnotate,
-                         const Expr *EscapeExpr) override {
-    unsigned DiagID;
-    switch (Scope) {
-    case SuggestionScope::CrossTU:
-      DiagID = diag::warn_lifetime_safety_cross_tu_suggestion;
-      break;
-    case SuggestionScope::IntraTU:
-      DiagID = diag::warn_lifetime_safety_intra_tu_suggestion;
-      break;
-    }
-
-    SourceLocation InsertionPoint = Lexer::getLocForEndOfToken(
-        ParmToAnnotate->getEndLoc(), 0, S.getSourceManager(), S.getLangOpts());
-
-    S.Diag(ParmToAnnotate->getBeginLoc(), DiagID)
-        << ParmToAnnotate->getSourceRange()
-        << FixItHint::CreateInsertion(InsertionPoint,
-                                      " [[clang::lifetimebound]]");
-
-    S.Diag(EscapeExpr->getBeginLoc(),
-           diag::note_lifetime_safety_suggestion_returned_here)
-        << EscapeExpr->getSourceRange();
-  }
-
-private:
-  Sema &S;
-};
-} // namespace
-} // namespace clang::lifetimes
-
 static void
 LifetimeSafetyTUAnalysis(Sema &S, TranslationUnitDecl *TU,
                          clang::lifetimes::LifetimeSafetyStats &LSStats) {
   llvm::TimeTraceScope TimeProfile("LifetimeSafetyTUAnalysis");
   CallGraph CG;
   CG.addToCallGraph(TU);
-  lifetimes::LifetimeSafetyReporterImpl Reporter(S);
+  lifetimes::LifetimeSafetySemaHelperImpl SemaHelper(S);
   for (auto *Node : llvm::post_order(&CG)) {
     const clang::FunctionDecl *CanonicalFD =
         dyn_cast_or_null<clang::FunctionDecl>(Node->getDecl());
@@ -2951,9 +2890,10 @@ LifetimeSafetyTUAnalysis(Sema &S, TranslationUnitDecl *TU,
     AnalysisDeclContext AC(nullptr, FD);
     AC.getCFGBuildOptions().PruneTriviallyFalseEdges = false;
     AC.getCFGBuildOptions().AddLifetime = true;
+    AC.getCFGBuildOptions().AddParameterLifetimes = true;
     AC.getCFGBuildOptions().setAllAlwaysAdd();
     if (AC.getCFG())
-      runLifetimeSafetyAnalysis(AC, &Reporter, LSStats, S.CollectStats);
+      runLifetimeSafetyAnalysis(AC, &SemaHelper, LSStats, S.CollectStats);
   }
 }
 
@@ -3057,16 +2997,15 @@ void clang::sema::AnalysisBasedWarnings::IssueWarnings(
   AC.getCFGBuildOptions().AddEHEdges = false;
   AC.getCFGBuildOptions().AddInitializers = true;
   AC.getCFGBuildOptions().AddImplicitDtors = true;
+  AC.getCFGBuildOptions().AddParameterLifetimes = true;
   AC.getCFGBuildOptions().AddTemporaryDtors = true;
   AC.getCFGBuildOptions().AddCXXNewAllocator = false;
   AC.getCFGBuildOptions().AddCXXDefaultInitExprInCtors = true;
 
   bool EnableLifetimeSafetyAnalysis =
       S.getLangOpts().EnableLifetimeSafety &&
-      !S.getLangOpts().EnableLifetimeSafetyTUAnalysis;
-
-  if (EnableLifetimeSafetyAnalysis)
-    AC.getCFGBuildOptions().AddLifetime = true;
+      !S.getLangOpts().EnableLifetimeSafetyTUAnalysis &&
+      lifetimes::IsLifetimeSafetyDiagnosticEnabled(S, D);
 
   // Force that certain expressions appear as CFGElements in the CFG.  This
   // is used to speed up various analyses.
@@ -3088,9 +3027,8 @@ void clang::sema::AnalysisBasedWarnings::IssueWarnings(
       .setAlwaysAdd(Stmt::ImplicitCastExprClass)
       .setAlwaysAdd(Stmt::UnaryOperatorClass);
   }
-  if (EnableLifetimeSafetyAnalysis) {
+  if (EnableLifetimeSafetyAnalysis)
     AC.getCFGBuildOptions().AddLifetime = true;
-  }
 
   // Install the logical handler.
   std::optional<LogicalErrorHandler> LEH;
@@ -3182,9 +3120,9 @@ void clang::sema::AnalysisBasedWarnings::IssueWarnings(
   // stable.
   if (EnableLifetimeSafetyAnalysis && S.getLangOpts().CPlusPlus) {
     if (AC.getCFG()) {
-      lifetimes::LifetimeSafetyReporterImpl LifetimeSafetyReporter(S);
-      lifetimes::runLifetimeSafetyAnalysis(AC, &LifetimeSafetyReporter, LSStats,
-                                           S.CollectStats);
+      lifetimes::LifetimeSafetySemaHelperImpl LifetimeSafetySemaHelper(S);
+      lifetimes::runLifetimeSafetyAnalysis(AC, &LifetimeSafetySemaHelper,
+                                           LSStats, S.CollectStats);
     }
   }
   // Check for violations of "called once" parameter properties.
