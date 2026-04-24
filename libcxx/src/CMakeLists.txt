@@ -16,7 +16,6 @@ set(LIBCXX_SOURCES
   filesystem/path.cpp
   functional.cpp
   hash.cpp
-  include/apple_availability.h
   include/atomic_support.h
   include/config_elast.h
   include/refstring.h
