@@ -33,13 +33,13 @@ TEST_F(OnDiskCASTest, OnDiskKeyValueDBTest) {
   }
 
   ValueType ValW = valueFromString("world");
-  ArrayRef<char> Val;
+  std::optional<ArrayRef<char>> Val;
   ASSERT_THAT_ERROR(DB->put(digest("hello"), ValW).moveInto(Val), Succeeded());
-  EXPECT_EQ(Val, ArrayRef(ValW));
+  EXPECT_EQ(*Val, ArrayRef(ValW));
   ASSERT_THAT_ERROR(
       DB->put(digest("hello"), valueFromString("other")).moveInto(Val),
       Succeeded());
-  EXPECT_EQ(Val, ArrayRef(ValW));
+  EXPECT_EQ(*Val, ArrayRef(ValW));
 
   {
     std::optional<ArrayRef<char>> Val;
@@ -49,13 +49,7 @@ TEST_F(OnDiskCASTest, OnDiskKeyValueDBTest) {
   }
 
   // Validate
-  {
-    auto ValidateFunc = [](FileOffset Offset, ArrayRef<char> Data) -> Error {
-      EXPECT_EQ(Data.size(), sizeof(ValueType));
-      return Error::success();
-    };
-    ASSERT_THAT_ERROR(DB->validate(ValidateFunc), Succeeded());
-  }
+  ASSERT_THAT_ERROR(DB->validate(), Succeeded());
 
   // Size
   {
@@ -65,7 +59,7 @@ TEST_F(OnDiskCASTest, OnDiskKeyValueDBTest) {
     // Insert a lot of entries.
     for (unsigned I = 0; I < 1024 * 100; ++I) {
       std::string Index = Twine(I).str();
-      ArrayRef<char> Val;
+      std::optional<ArrayRef<char>> Val;
       ASSERT_THAT_ERROR(
           DB->put(digest(Index), valueFromString(Index)).moveInto(Val),
           Succeeded());
