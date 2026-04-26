@@ -2002,6 +2002,7 @@ spanstream cctype
 spanstream cerrno
 spanstream climits
 spanstream clocale
+spanstream cmath
 spanstream compare
 spanstream concepts
 spanstream cstdarg
